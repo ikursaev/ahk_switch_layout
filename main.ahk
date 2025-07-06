@@ -226,25 +226,6 @@ GetCurrentLayoutName() {
     return "UNKNOWN"
 }
 
-; Switch to next keyboard layout
-SwitchToNextLayout() {
-    global AvailableLayouts, CurrentLayoutIndex
-
-    CurrentLayoutIndex := Mod(CurrentLayoutIndex + 1, AvailableLayouts.Length)
-    targetLayout := AvailableLayouts[CurrentLayoutIndex + 1]
-
-    ; Switch using Windows API
-    if (targetLayout.hkl != 0) {
-        DllCall("ActivateKeyboardLayout", "Ptr", targetLayout.hkl, "UInt", 0)
-    } else {
-        ; Fallback to Alt+Shift
-        Send "{Alt Down}{Shift Down}{Shift Up}{Alt Up}"
-    }
-
-    ; Update current layout
-    global CurrentActiveLayout
-    CurrentActiveLayout := targetLayout.name
-}
 
 ; Convert text between layouts with layout awareness
 ConvertTextWithLayoutAwareness(text, currentLayout := "") {
@@ -403,48 +384,6 @@ GetCurrentLayoutNameWithRetry(maxRetries := 3) {
         Sleep 50
     }
     return GetCurrentLayoutName()  ; Return whatever we got on final attempt
-}
-
-; Get the last typed word
-GetLastTypedWord() {
-    ; Save current clipboard
-    oldClipboard := ClipboardAll()
-
-    ; Clear clipboard
-    A_Clipboard := ""
-
-    ; Select current word using whitespace boundaries
-    SelectLastWordInLine()
-
-    ; Copy selection
-    Send "^c"
-
-    if (!ClipWait(0.2)) {
-        ; Fallback method
-        A_Clipboard := ""
-        Send "{Home}"
-        Send "+{End}"
-        Send "^c"
-
-        if (ClipWait(0.2)) {
-            fullLine := A_Clipboard
-            words := StrSplit(fullLine, " ")
-            if (words.Length > 0) {
-                word := words[words.Length]
-            } else {
-                word := fullLine
-            }
-        } else {
-            word := ""
-        }
-    } else {
-        word := A_Clipboard
-    }
-
-    ; Restore clipboard
-    A_Clipboard := oldClipboard
-
-    return Trim(word)
 }
 
 ; Main hotkey: Ctrl + CapsLock for smart text conversion (works with selected text or current word)
