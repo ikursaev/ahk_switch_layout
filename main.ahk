@@ -339,6 +339,77 @@ ConvertTextUsingMapping(text, mapping) {
     return result
 }
 
+; Select the last word in the current line
+SelectLastWordInLine() {
+    ; Go to start of line
+    Send "{Home}"
+
+    ; Get the entire line content
+    Send "+{End}"
+    A_Clipboard := ""
+    Send "^c"
+
+    if (!ClipWait(0.1)) {
+        Send "{End}"
+        return
+    }
+
+    lineText := A_Clipboard
+    Send "{Home}"  ; Go back to start
+
+    ; Find the last word in the line
+    ; Remove trailing whitespace first
+    lineText := RTrim(lineText)
+
+    if (StrLen(lineText) == 0) {
+        Send "{End}"
+        return
+    }
+
+    ; Find the start of the last word by searching backwards for whitespace
+    lastWordStart := StrLen(lineText)
+
+    ; Find where the last word starts (after the last space or line break)
+    Loop StrLen(lineText) {
+        charPos := StrLen(lineText) - A_Index + 1
+        char := SubStr(lineText, charPos, 1)
+
+        if (char == " " || char == "`t" || char == "`n" || char == "`r") {
+            lastWordStart := charPos + 1
+            break
+        }
+
+        if (charPos == 1) {
+            lastWordStart := 1
+            break
+        }
+    }
+
+    ; Calculate word length
+    wordLength := StrLen(lineText) - lastWordStart + 1
+
+    ; Move to the start of the last word
+    Loop (lastWordStart - 1) {
+        Send "{Right}"
+    }
+
+    ; Select the word
+    Send "+{Right " . wordLength . "}"
+}
+
+; Get current layout name with retry logic
+GetCurrentLayoutNameWithRetry(maxRetries := 3) {
+    Loop maxRetries {
+        Sleep 50  ; Give system time to process layout change
+        layoutName := GetCurrentLayoutName()
+        if (layoutName != "UNKNOWN") {
+            return layoutName
+        }
+        Sleep 50
+    }
+    return GetCurrentLayoutName()  ; Return whatever we got on final attempt
+}
+
 ; Get the last typed word
 GetLastTypedWord() {
     ; Save current clipboard
@@ -347,9 +418,8 @@ GetLastTypedWord() {
     ; Clear clipboard
     A_Clipboard := ""
 
-    ; Select current word
-    Send "^{Left}"      ; Move to start of word
-    Send "^+{Right}"    ; Select word to the right
+    ; Select current word using whitespace boundaries
+    SelectLastWordInLine()
 
     ; Copy selection
     Send "^c"
@@ -446,10 +516,11 @@ GetLastTypedWord() {
     ; Restore clipboard first since we're starting fresh
     A_Clipboard := oldClipboard
 
-    Send "^{Left}^+{Right}"  ; Select current word
+    ; Use last word selection from line
+    SelectLastWordInLine()
     A_Clipboard := ""
     Send "^c"
-    Sleep 100
+    Sleep 200
 
     if (A_Clipboard != "" && Trim(A_Clipboard) != "") {
         wordText := Trim(A_Clipboard)
@@ -483,9 +554,9 @@ GetLastTypedWord() {
     ; Switch layout
     Send "{Alt Down}{Shift Down}{Shift Up}{Alt Up}"
 
-    ; Update current layout tracking
+    ; Update current layout tracking with retry logic
     global CurrentActiveLayout
-    CurrentActiveLayout := GetCurrentLayoutName()
+    CurrentActiveLayout := GetCurrentLayoutNameWithRetry()
 
     SetTimer(() => ToolTip(), -3000)
 }
@@ -494,9 +565,9 @@ GetLastTypedWord() {
 CapsLock:: {
     Send "{Alt Down}{Shift Down}{Shift Up}{Alt Up}"
 
-    ; Update current layout tracking
+    ; Update current layout tracking with retry logic
     global CurrentActiveLayout
-    CurrentActiveLayout := GetCurrentLayoutName()
+    CurrentActiveLayout := GetCurrentLayoutNameWithRetry()
 
     ; Show current layout
     ToolTip("Layout: " . CurrentActiveLayout)
