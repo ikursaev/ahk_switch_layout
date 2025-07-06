@@ -354,12 +354,12 @@ SelectLastWordInLine() {
         return
     }
 
-    lineText := A_Clipboard
+    originalLineText := A_Clipboard
     Send "{Home}"  ; Go back to start
 
     ; Find the last word in the line
-    ; Remove trailing whitespace first
-    lineText := RTrim(lineText)
+    ; Remove trailing whitespace and newlines for analysis
+    lineText := RTrim(originalLineText, " `t`n`r")
 
     if (StrLen(lineText) == 0) {
         Send "{End}"
@@ -367,7 +367,7 @@ SelectLastWordInLine() {
     }
 
     ; Find the start of the last word by searching backwards for whitespace
-    lastWordStart := StrLen(lineText)
+    lastWordStart := 1  ; Default to start of line if no whitespace found
 
     ; Find where the last word starts (after the last space or line break)
     Loop StrLen(lineText) {
@@ -378,14 +378,9 @@ SelectLastWordInLine() {
             lastWordStart := charPos + 1
             break
         }
-
-        if (charPos == 1) {
-            lastWordStart := 1
-            break
-        }
     }
 
-    ; Calculate word length
+    ; Calculate word length (use trimmed version for accurate length)
     wordLength := StrLen(lineText) - lastWordStart + 1
 
     ; Move to the start of the last word
