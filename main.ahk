@@ -217,12 +217,6 @@ GetCurrentLayoutName() {
 
     ; Get the foreground window's thread to check its layout
     hwnd := DllCall("GetForegroundWindow", "Ptr")
-
-    ; Handle desktop/no window case
-    if (!hwnd) {
-        hwnd := DllCall("GetShellWindow", "Ptr")
-    }
-
     threadId := hwnd ? DllCall("GetWindowThreadProcessId", "Ptr", hwnd, "Ptr", 0, "UInt") : 0
 
     hkl := DllCall("GetKeyboardLayout", "UInt", threadId, "Ptr")
@@ -243,36 +237,48 @@ SwitchToNextLayout() {
     ; Get foreground window
     hwnd := DllCall("GetForegroundWindow", "Ptr")
 
-    ; Handle desktop/no window case - get shell window as fallback
-    if (!hwnd) {
-        hwnd := DllCall("GetShellWindow", "Ptr")
-    }
-
-    ; Get the thread ID of the foreground window (not our script's thread)
-    threadId := hwnd ? DllCall("GetWindowThreadProcessId", "Ptr", hwnd, "Ptr", 0, "UInt") : 0
-
-    ; Get the current layout for that window's thread (fallback to thread 0 if needed)
-    currentHKL := DllCall("GetKeyboardLayout", "UInt", threadId, "Ptr")
-    currentId := currentHKL & 0xFFFF
-
-    ; Find current index and calculate next
-    nextIndex := 1
-    for i, layout in AvailableLayouts {
-        if (layout.id == currentId) {
-            nextIndex := (i >= AvailableLayouts.Length) ? 1 : i + 1
-            break
-        }
-    }
-
-    ; Get target layout HKL
-    targetHKL := AvailableLayouts[nextIndex].hkl
-
-    ; Switch layout - use PostMessage if we have a window, otherwise use ActivateKeyboardLayout
+    ; Check if this is a shell window (taskbar, desktop, etc.) that needs Alt+Shift
+    useAltShift := false
     if (hwnd) {
-        DllCall("PostMessage", "Ptr", hwnd, "UInt", 0x0050, "Ptr", 0, "Ptr", targetHKL)
+        ; Get window class name
+        className := Buffer(256)
+        DllCall("GetClassName", "Ptr", hwnd, "Ptr", className, "Int", 256)
+        classStr := StrGet(className)
+
+        ; Shell window classes that don't respond well to PostMessage
+        shellClasses := ["Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Progman", "WorkerW", "NotifyIconOverflowWindow"]
+        for shellClass in shellClasses {
+            if (classStr = shellClass) {
+                useAltShift := true
+                break
+            }
+        }
     } else {
-        ; Fallback: activate layout for current process
-        DllCall("ActivateKeyboardLayout", "Ptr", targetHKL, "UInt", 0)
+        ; No foreground window - use Alt+Shift
+        useAltShift := true
+    }
+
+    if (useAltShift) {
+        ; Use system shortcut for shell windows and desktop
+        Send "{Alt Down}{Shift Down}{Shift Up}{Alt Up}"
+    } else {
+        ; Use PostMessage API for regular application windows
+        threadId := DllCall("GetWindowThreadProcessId", "Ptr", hwnd, "Ptr", 0, "UInt")
+        currentHKL := DllCall("GetKeyboardLayout", "UInt", threadId, "Ptr")
+        currentId := currentHKL & 0xFFFF
+
+        ; Find current index and calculate next
+        nextIndex := 1
+        for i, layout in AvailableLayouts {
+            if (layout.id == currentId) {
+                nextIndex := (i >= AvailableLayouts.Length) ? 1 : i + 1
+                break
+            }
+        }
+
+        ; Post layout change message
+        targetHKL := AvailableLayouts[nextIndex].hkl
+        DllCall("PostMessage", "Ptr", hwnd, "UInt", 0x0050, "Ptr", 0, "Ptr", targetHKL)
     }
 }
 
