@@ -16,10 +16,6 @@ class Config {
     static TooltipShort := 1500
     static TooltipMedium := 3000
     static TooltipLong := 4000
-    static TooltipInfo := 5000
-
-    ; Double-tap detection
-    static DoubleTapThreshold := 300     ; Max ms between taps for double-tap
 
     ; Display settings
     static MaxDisplayLength := 20        ; Max chars to show in tooltip
@@ -427,16 +423,6 @@ class LayoutManager {
         }
         return text
     }
-
-    ; Get layout info string
-    GetLayoutInfo() {
-        info := "Current Layout: " . this.CurrentLayout . "`n`nAvailable Layouts:`n"
-        for layout in this.Layouts {
-            indicator := (layout.code == this.CurrentLayout) ? " ◄" : ""
-            info .= "• " . layout.name . " (" . layout.code . ")" . indicator . "`n"
-        }
-        return info
-    }
 }
 
 ; ============================================================================
@@ -479,68 +465,30 @@ class ClipboardHelper {
 }
 
 ; ============================================================================
-; DOUBLE-TAP DETECTOR
-; ============================================================================
-
-class DoubleTapDetector {
-    lastTapTime := 0
-
-    ; Check if this is a double-tap
-    IsDoubleTap() {
-        currentTime := A_TickCount
-        timeSinceLast := currentTime - this.lastTapTime
-        this.lastTapTime := currentTime
-
-        return timeSinceLast < Config.DoubleTapThreshold
-    }
-
-    ; Reset the detector
-    Reset() {
-        this.lastTapTime := 0
-    }
-}
-
-; ============================================================================
 ; INITIALIZATION
 ; ============================================================================
 
 SetCapsLockState "AlwaysOff"
 
-; Create global instances
+; Create global instance
 global LM := LayoutManager()
-global CapsDetector := DoubleTapDetector()
 
 ; ============================================================================
 ; HOTKEY DEFINITIONS
 ; ============================================================================
 
-; CapsLock: Single tap = switch layout, Double tap = convert text
+; CapsLock: Switch layout
 CapsLock:: {
-    global LM, CapsDetector
-
-    if (CapsDetector.IsDoubleTap()) {
-        ; Double-tap: Convert text
-        ConvertTextAction()
-    } else {
-        ; Single tap: Just switch layout
-        LM.SwitchLayout()
-        LM.CurrentLayout := LM.GetCurrentLayoutCodeWithRetry()
-        LM.ShowTooltip("Layout: " . LM.CurrentLayout, Config.TooltipShort)
-    }
+    global LM
+    LM.SwitchLayout()
+    LM.CurrentLayout := LM.GetCurrentLayoutCodeWithRetry()
+    LM.ShowTooltip("Layout: " . LM.CurrentLayout, Config.TooltipShort)
 }
 
-; Shift+CapsLock: Refresh layouts
+; Shift+CapsLock: Convert text
 +CapsLock:: {
     global LM
-    LM.ShowTooltip("Refreshing keyboard layouts...")
-    LM.Initialize()
-}
-
-; Win+CapsLock: Show layout info
-#CapsLock:: {
-    global LM
-    LM.CurrentLayout := LM.GetCurrentLayoutCode()
-    LM.ShowTooltip(LM.GetLayoutInfo(), Config.TooltipInfo)
+    ConvertTextAction()
 }
 
 ; ============================================================================
@@ -558,7 +506,6 @@ ConvertTextAction() {
         selectedText := clip.GetText()
 
         if (selectedText != "") {
-            ; Convert selected text
             result := LM.ConvertText(selectedText)
 
             if (result.text != "" && result.text != selectedText) {
@@ -605,8 +552,4 @@ ConvertTextAction() {
 
     clip.Restore()
     LM.ShowTooltip("No conversion available")
-
-    ; Still switch layout even if no conversion
-    LM.SwitchLayout()
-    LM.CurrentLayout := LM.GetCurrentLayoutCodeWithRetry()
 }
