@@ -8,25 +8,21 @@ An AutoHotkey script that provides seamless keyboard layout switching and text c
 - [AutoHotkey v2.0](https://www.autohotkey.com/)
 - Alt+Shift must be configured as your Windows layout switch shortcut (Settings → Time & Language → Typing → Advanced keyboard settings)
 
-## Features
-
-### Hotkeys
+## Hotkeys
 
 | Hotkey | Action |
 |--------|--------|
 | `CapsLock` | Switch to the next keyboard layout |
-| `Ctrl + CapsLock` | Convert selected text (or last word) to another layout and switch |
-| `Ctrl + Alt + R` | Refresh detected keyboard layouts |
-| `Ctrl + Alt + I` | Show current layout info |
+| `Shift + CapsLock` | Convert selected text (or last word) to another layout and switch |
 
-### Smart Text Conversion (Ctrl + CapsLock)
+## Text Conversion (Shift + CapsLock)
 
 Works in two modes:
 
 1. **Selection Mode**: If you have text selected, it converts the entire selection
 2. **Word Mode**: If nothing is selected, it automatically selects and converts the last word on the current line
 
-This is useful when you accidentally type in the wrong layout - just press `Ctrl + CapsLock` to fix it.
+This is useful when you accidentally type in the wrong layout - just press `Shift + CapsLock` to fix it.
 
 ## How It Works
 
@@ -71,7 +67,7 @@ The script dynamically generates character mappings between all installed layout
 
 **Layout doesn't switch:**
 - Make sure Alt+Shift is set as your Windows layout switcher
-- Try pressing `Ctrl + Alt + R` to refresh layouts
+- Restart the script if layouts were added/removed
 
 **Text conversion doesn't work:**
 - The script needs both layouts to have mappable characters
