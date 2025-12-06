@@ -211,11 +211,21 @@ GetCharFromVirtualKey(vk, shift, hkl) {
     return ""
 }
 
-; Get current keyboard layout name
+; Get current keyboard layout name for the foreground window
 GetCurrentLayoutName() {
     global AvailableLayouts
 
-    hkl := DllCall("GetKeyboardLayout", "UInt", 0, "Ptr")
+    ; Get the foreground window's thread to check its layout
+    hwnd := DllCall("GetForegroundWindow", "Ptr")
+
+    ; Handle desktop/no window case
+    if (!hwnd) {
+        hwnd := DllCall("GetShellWindow", "Ptr")
+    }
+
+    threadId := hwnd ? DllCall("GetWindowThreadProcessId", "Ptr", hwnd, "Ptr", 0, "UInt") : 0
+
+    hkl := DllCall("GetKeyboardLayout", "UInt", threadId, "Ptr")
     layoutId := hkl & 0xFFFF
 
     for layout in AvailableLayouts {
@@ -224,6 +234,46 @@ GetCurrentLayoutName() {
         }
     }
     return "UNKNOWN"
+}
+
+; Switch to next keyboard layout using Windows API
+SwitchToNextLayout() {
+    global AvailableLayouts, CurrentLayoutIndex
+
+    ; Get foreground window
+    hwnd := DllCall("GetForegroundWindow", "Ptr")
+
+    ; Handle desktop/no window case - get shell window as fallback
+    if (!hwnd) {
+        hwnd := DllCall("GetShellWindow", "Ptr")
+    }
+
+    ; Get the thread ID of the foreground window (not our script's thread)
+    threadId := hwnd ? DllCall("GetWindowThreadProcessId", "Ptr", hwnd, "Ptr", 0, "UInt") : 0
+
+    ; Get the current layout for that window's thread (fallback to thread 0 if needed)
+    currentHKL := DllCall("GetKeyboardLayout", "UInt", threadId, "Ptr")
+    currentId := currentHKL & 0xFFFF
+
+    ; Find current index and calculate next
+    nextIndex := 1
+    for i, layout in AvailableLayouts {
+        if (layout.id == currentId) {
+            nextIndex := (i >= AvailableLayouts.Length) ? 1 : i + 1
+            break
+        }
+    }
+
+    ; Get target layout HKL
+    targetHKL := AvailableLayouts[nextIndex].hkl
+
+    ; Switch layout - use PostMessage if we have a window, otherwise use ActivateKeyboardLayout
+    if (hwnd) {
+        DllCall("PostMessage", "Ptr", hwnd, "UInt", 0x0050, "Ptr", 0, "Ptr", targetHKL)
+    } else {
+        ; Fallback: activate layout for current process
+        DllCall("ActivateKeyboardLayout", "Ptr", targetHKL, "UInt", 0)
+    }
 }
 
 
@@ -428,7 +478,7 @@ GetCurrentLayoutNameWithRetry(maxRetries := 3) {
             ToolTip("SELECTION: '" . displayText . "' → '" . displayConverted . "'")
 
             ; Switch layout and finish
-            Send "{Alt Down}{Shift Down}{Shift Up}{Alt Up}"
+            SwitchToNextLayout()
             global CurrentActiveLayout
             CurrentActiveLayout := GetCurrentLayoutName()
             SetTimer(() => ToolTip(), -3000)
@@ -438,7 +488,7 @@ GetCurrentLayoutNameWithRetry(maxRetries := 3) {
             A_Clipboard := oldClipboard
             Send "{Right}"  ; Deselect
             ToolTip("No conversion for selection")
-            Send "{Alt Down}{Shift Down}{Shift Up}{Alt Up}"
+            SwitchToNextLayout()
             global CurrentActiveLayout
             CurrentActiveLayout := GetCurrentLayoutName()
             SetTimer(() => ToolTip(), -3000)
@@ -486,7 +536,7 @@ GetCurrentLayoutNameWithRetry(maxRetries := 3) {
     }
 
     ; Switch layout
-    Send "{Alt Down}{Shift Down}{Shift Up}{Alt Up}"
+    SwitchToNextLayout()
 
     ; Update current layout tracking with retry logic
     global CurrentActiveLayout
@@ -497,7 +547,7 @@ GetCurrentLayoutNameWithRetry(maxRetries := 3) {
 
 ; Regular CapsLock behavior (just switch layout)
 CapsLock:: {
-    Send "{Alt Down}{Shift Down}{Shift Up}{Alt Up}"
+    SwitchToNextLayout()
 
     ; Update current layout tracking with retry logic
     global CurrentActiveLayout
