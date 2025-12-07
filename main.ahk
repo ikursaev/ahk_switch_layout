@@ -29,6 +29,13 @@ class Config {
         "NotifyIconOverflowWindow"
     ]
 
+    ; Electron/UWP app classes that need Alt+Shift for layout switching
+    ; (PostMessage doesn't work reliably with these apps)
+    static ElectronClasses := [
+        "Chrome_WidgetWin_1",      ; WhatsApp, Discord, Slack, VS Code, etc.
+        "ApplicationFrameWindow"   ; UWP apps
+    ]
+
     ; Layout information database
     static LayoutInfo := Map(
         0x0409, {code: "EN-US", name: "English (US)"},
@@ -283,7 +290,7 @@ class LayoutManager {
     SwitchLayout() {
         hwnd := DllCall("GetForegroundWindow", "Ptr")
 
-        if (this._IsShellWindow(hwnd)) {
+        if (this._NeedsAltShiftSwitch(hwnd)) {
             ; Use system shortcut for shell windows
             Send "{Alt Down}{Shift Down}{Shift Up}{Alt Up}"
         } else if (hwnd) {
@@ -309,8 +316,9 @@ class LayoutManager {
         }
     }
 
-    ; Check if window is a shell window
-    _IsShellWindow(hwnd) {
+    ; Check if window needs Alt+Shift for layout switching
+    ; (Shell windows and Electron/UWP apps don't respond to PostMessage)
+    _NeedsAltShiftSwitch(hwnd) {
         if (!hwnd) {
             return true
         }
@@ -319,8 +327,16 @@ class LayoutManager {
         DllCall("GetClassName", "Ptr", hwnd, "Ptr", className, "Int", 256)
         classStr := StrGet(className)
 
+        ; Check shell window classes
         for shellClass in Config.ShellClasses {
             if (classStr = shellClass) {
+                return true
+            }
+        }
+
+        ; Check Electron/UWP app classes
+        for electronClass in Config.ElectronClasses {
+            if (classStr = electronClass) {
                 return true
             }
         }
@@ -485,8 +501,8 @@ CapsLock:: {
     LM.ShowTooltip("Layout: " . LM.CurrentLayout, Config.TooltipShort)
 }
 
-; Shift+CapsLock: Convert text
-+CapsLock:: {
+; Ctrl+CapsLock: Convert text
+^CapsLock:: {
     global LM
     ConvertTextAction()
 }
