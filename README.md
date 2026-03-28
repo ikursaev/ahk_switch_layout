@@ -100,13 +100,29 @@ When converting text, the script scores each installed layout by counting how ma
 
 Text conversion uses the clipboard internally. The script saves and restores the original clipboard contents so your clipboard is not affected.
 
+### Terminal Awareness
+
+In terminals, `Ctrl+C` sends SIGINT instead of copying text. The script detects terminal windows and automatically uses the correct shortcuts:
+
+| Terminal | Copy | Paste |
+|----------|------|-------|
+| Windows Terminal | `Ctrl+Shift+C` | `Ctrl+Shift+V` |
+| ConEmu / Cmder | `Ctrl+Shift+C` | `Ctrl+Shift+V` |
+| Git Bash / MSYS2 (mintty) | `Ctrl+Insert` | `Shift+Insert` |
+| Alacritty | `Ctrl+Shift+C` | `Ctrl+Shift+V` |
+| Other apps | `Ctrl+C` | `Ctrl+V` |
+
+In terminals, the "word mode" fallback (auto-select last word) is disabled since `End`/`Ctrl+Shift+Left` behave differently. You must select text manually first, then press `Ctrl + CapsLock`.
+
+To add support for other terminals, add their window class to `Config.TerminalClasses`.
+
 ## Configuration
 
 All tunables are in the `Config` class at the top of `main.ahk`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `RequestAdmin` | `false` | Auto-request admin elevation on startup |
+| `RequestAdmin` | `true` | Auto-request admin elevation on startup |
 | `ClipboardWait` | `0.5` | ClipWait timeout (seconds) |
 | `ClipboardSleep` | `150` | Sleep after clipboard operations (ms) |
 | `PasteSleep` | `100` | Sleep after paste (ms) |

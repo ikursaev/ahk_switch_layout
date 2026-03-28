@@ -23,6 +23,16 @@ class Config {
     ; Auto-request admin elevation on startup (enables switching in elevated apps)
     static RequestAdmin := true
 
+    ; Terminal window classes → copy/paste shortcuts
+    ; Ctrl+C sends SIGINT in terminals, so they use different shortcuts
+    static TerminalClasses := Map(
+        "CASCADIA_HOSTING_WINDOW_CLASS", {copy: "^+c", paste: "^+v"},  ; Windows Terminal
+        "VirtualConsoleClass",           {copy: "^+c", paste: "^+v"},  ; ConEmu / Cmder
+        "mintty",                        {copy: "^{Insert}", paste: "+{Insert}"},  ; Git Bash / MSYS2
+        "tmux",                          {copy: "^+c", paste: "^+v"},  ; tmux terminal
+        "Alacritty",                     {copy: "^+c", paste: "^+v"}   ; Alacritty
+    )
+
     ; Layout information database
     static LayoutInfo := Map(
         0x0409, {code: "EN-US", name: "English (US)"},
@@ -388,10 +398,25 @@ class LayoutManager {
         return result
     }
 
-    ; Select last word in current line (optimized)
+    ; Check if foreground window is a terminal
+    IsTerminal() {
+        hwnd := DllCall("GetForegroundWindow", "Ptr")
+        if (!hwnd) {
+            return false
+        }
+        className := Buffer(256)
+        DllCall("GetClassName", "Ptr", hwnd, "Ptr", className, "Int", 256)
+        return Config.TerminalClasses.Has(StrGet(className))
+    }
+
+    ; Select last word in current line (skipped in terminals)
     SelectLastWord() {
+        if (this.IsTerminal()) {
+            return false
+        }
         Send "{End}"
         Send "^+{Left}"
+        return true
     }
 
     ; Unified tooltip display
@@ -418,6 +443,30 @@ class LayoutManager {
 
 class ClipboardHelper {
     savedClipboard := ""
+    copyKey := "^c"
+    pasteKey := "^v"
+
+    __New() {
+        this._DetectTerminal()
+    }
+
+    ; Detect if foreground window is a terminal and set appropriate shortcuts
+    _DetectTerminal() {
+        hwnd := DllCall("GetForegroundWindow", "Ptr")
+        if (!hwnd) {
+            return
+        }
+
+        className := Buffer(256)
+        DllCall("GetClassName", "Ptr", hwnd, "Ptr", className, "Int", 256)
+        classStr := StrGet(className)
+
+        if (Config.TerminalClasses.Has(classStr)) {
+            shortcuts := Config.TerminalClasses[classStr]
+            this.copyKey := shortcuts.copy
+            this.pasteKey := shortcuts.paste
+        }
+    }
 
     ; Save current clipboard
     Save() {
@@ -431,17 +480,17 @@ class ClipboardHelper {
         this.savedClipboard := ""
     }
 
-    ; Copy with wait
+    ; Copy with wait (uses terminal-aware shortcut)
     Copy() {
-        Send "^c"
+        Send this.copyKey
         Sleep Config.ClipboardSleep
         return ClipWait(Config.ClipboardWait) && A_Clipboard != ""
     }
 
-    ; Paste text
+    ; Paste text (uses terminal-aware shortcut)
     Paste(text) {
         A_Clipboard := text
-        Send "^v"
+        Send this.pasteKey
         Sleep Config.PasteSleep
     }
 
@@ -518,11 +567,15 @@ ConvertTextAction() {
         }
     }
 
-    ; No selection - try to select and convert last word
+    ; No selection - try to select and convert last word (not in terminals)
     clip.Restore()
     clip.Save()
 
-    LM.SelectLastWord()
+    if (!LM.SelectLastWord()) {
+        clip.Restore()
+        LM.ShowTooltip("Select text first (terminal detected)")
+        return
+    }
 
     if (clip.Copy()) {
         wordText := clip.GetText()
