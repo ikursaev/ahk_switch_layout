@@ -215,24 +215,19 @@ class LayoutManager {
 
     ; Build reverse character-to-layout map for fast detection
     _BuildReverseCharMap() {
+        seen := Map()  ; "char|layoutCode" -> true, for dedup
         for layout in this.Layouts {
             for otherLayout in this.Layouts {
                 if (layout.code != otherLayout.code) {
                     key := layout.code . "_" . otherLayout.code
                     if (this.Mappings.Has(key)) {
                         for char, _ in this.Mappings[key] {
-                            if (!this.CharToLayoutMap.Has(char)) {
-                                this.CharToLayoutMap[char] := []
-                            }
-                            ; Add layout code if not already present
-                            found := false
-                            for existingCode in this.CharToLayoutMap[char] {
-                                if (existingCode == layout.code) {
-                                    found := true
-                                    break
+                            dedupKey := char . "|" . layout.code
+                            if (!seen.Has(dedupKey)) {
+                                seen[dedupKey] := true
+                                if (!this.CharToLayoutMap.Has(char)) {
+                                    this.CharToLayoutMap[char] := []
                                 }
-                            }
-                            if (!found) {
                                 this.CharToLayoutMap[char].Push(layout.code)
                             }
                         }
@@ -399,15 +394,20 @@ class LayoutManager {
         return result
     }
 
-    ; Check if foreground window is a terminal
-    IsTerminal() {
+    ; Get foreground window class name
+    GetForegroundWindowClass() {
         hwnd := DllCall("GetForegroundWindow", "Ptr")
         if (!hwnd) {
-            return false
+            return ""
         }
         className := Buffer(256)
         DllCall("GetClassName", "Ptr", hwnd, "Ptr", className, "Int", 256)
-        return Config.TerminalClasses.Has(StrGet(className))
+        return StrGet(className)
+    }
+
+    ; Check if foreground window is a terminal
+    IsTerminal() {
+        return Config.TerminalClasses.Has(this.GetForegroundWindowClass())
     }
 
     ; Select last word in current line (skipped in terminals)
@@ -447,21 +447,8 @@ class ClipboardHelper {
     copyKey := "^c"
     pasteKey := "^v"
 
-    __New() {
-        this._DetectTerminal()
-    }
-
-    ; Detect if foreground window is a terminal and set appropriate shortcuts
-    _DetectTerminal() {
-        hwnd := DllCall("GetForegroundWindow", "Ptr")
-        if (!hwnd) {
-            return
-        }
-
-        className := Buffer(256)
-        DllCall("GetClassName", "Ptr", hwnd, "Ptr", className, "Int", 256)
-        classStr := StrGet(className)
-
+    __New(layoutManager) {
+        classStr := layoutManager.GetForegroundWindowClass()
         if (Config.TerminalClasses.Has(classStr)) {
             shortcuts := Config.TerminalClasses[classStr]
             this.copyKey := shortcuts.copy
@@ -500,6 +487,11 @@ class ClipboardHelper {
         A_Clipboard := text
         Send this.pasteKey
         Sleep Config.PasteSleep
+    }
+
+    ; Clear clipboard text (preserves savedClipboard for later Restore)
+    ClearText() {
+        A_Clipboard := ""
     }
 
     ; Get current text (trimmed)
@@ -550,7 +542,7 @@ CapsLock:: {
 ConvertTextAction() {
     global LM
 
-    clip := ClipboardHelper()
+    clip := ClipboardHelper(LM)
     clip.Save()
 
     ; Fast check: is there already a selection?
@@ -576,7 +568,7 @@ ConvertTextAction() {
     }
 
     ; No selection - try to select and convert last word (not in terminals)
-    A_Clipboard := ""  ; Clear without full restore/save cycle
+    clip.ClearText()
 
     if (!LM.SelectLastWord()) {
         clip.Restore()
