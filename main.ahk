@@ -206,6 +206,14 @@ class LayoutManager {
             "Ptr", hkl,
             "Int")
 
+        if (charCount == -1) {
+            ; Dead key — flush state to avoid corrupting keyboard buffer
+            DllCall("ToUnicodeEx",
+                "UInt", vk, "UInt", scanCode, "Ptr", keyState.Ptr,
+                "Ptr", result.Ptr, "Int", 2, "UInt", 0, "Ptr", hkl, "Int")
+            return ""
+        }
+
         if (charCount > 0) {
             return Chr(NumGet(result, 0, "UShort"))
         }
@@ -215,23 +223,24 @@ class LayoutManager {
 
     ; Build reverse character-to-layout map for fast detection
     _BuildReverseCharMap() {
-        seen := Map()  ; "char|layoutCode" -> true, for dedup
         for layout in this.Layouts {
-            for otherLayout in this.Layouts {
-                if (layout.code != otherLayout.code) {
-                    key := layout.code . "_" . otherLayout.code
-                    if (this.Mappings.Has(key)) {
-                        for char, _ in this.Mappings[key] {
-                            dedupKey := char . "|" . layout.code
-                            if (!seen.Has(dedupKey)) {
-                                seen[dedupKey] := true
-                                if (!this.CharToLayoutMap.Has(char)) {
-                                    this.CharToLayoutMap[char] := []
-                                }
-                                this.CharToLayoutMap[char].Push(layout.code)
-                            }
+            for vk in Config.VirtualKeys {
+                for shift in [false, true] {
+                    char := this._VKToChar(vk, shift, layout.hkl)
+                    if (char == "")
+                        continue
+                    if (!this.CharToLayoutMap.Has(char))
+                        this.CharToLayoutMap[char] := []
+                    ; Dedup
+                    found := false
+                    for existing in this.CharToLayoutMap[char] {
+                        if (existing == layout.code) {
+                            found := true
+                            break
                         }
                     }
+                    if (!found)
+                        this.CharToLayoutMap[char].Push(layout.code)
                 }
             }
         }
@@ -274,15 +283,13 @@ class LayoutManager {
         return "UNKNOWN"
     }
 
-    ; Get current layout code with retry logic
+    ; Get current layout code with retry logic (waits for actual layout change)
     GetCurrentLayoutCodeWithRetry() {
         Loop Config.LayoutSwitchMaxRetries {
             Sleep Config.LayoutSwitchRetryDelay
             code := this.GetCurrentLayoutCode()
-            if (code != "UNKNOWN") {
+            if (code != "UNKNOWN" && code != this.CurrentLayout)
                 return code
-            }
-            Sleep Config.LayoutSwitchRetryDelay
         }
         return this.GetCurrentLayoutCode()
     }
@@ -333,24 +340,31 @@ class LayoutManager {
             currentLayout := detectedLayout
         }
 
-        ; Find best conversion
+        ; Find conversion that changes the most characters (correct target for 3+ layouts)
+        bestResult := {text: "", fromLayout: currentLayout, toLayout: ""}
+        bestChanges := 0
+
         for layout in this.Layouts {
             if (layout.code != currentLayout) {
                 key := currentLayout . "_" . layout.code
                 if (this.Mappings.Has(key)) {
                     converted := this._ApplyMapping(text, this.Mappings[key])
                     if (converted != text && converted != "") {
-                        return {
-                            text: converted,
-                            fromLayout: currentLayout,
-                            toLayout: layout.code
+                        changes := 0
+                        Loop Parse, text {
+                            if (SubStr(converted, A_Index, 1) != A_LoopField)
+                                changes++
+                        }
+                        if (changes > bestChanges) {
+                            bestChanges := changes
+                            bestResult := {text: converted, fromLayout: currentLayout, toLayout: layout.code}
                         }
                     }
                 }
             }
         }
 
-        return {text: "", fromLayout: currentLayout, toLayout: ""}
+        return bestResult
     }
 
     ; Detect which layout text was likely typed in (optimized with reverse map)
@@ -485,6 +499,7 @@ class ClipboardHelper {
     ; Paste text (uses terminal-aware shortcut)
     Paste(text) {
         A_Clipboard := text
+        ClipWait(Config.ClipboardWait)
         Send this.pasteKey
         Sleep Config.PasteSleep
     }
