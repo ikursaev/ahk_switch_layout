@@ -6,10 +6,11 @@
 
 class Config {
     ; Timing constants (milliseconds)
-    static ClipboardWait := 0.5          ; ClipWait timeout in seconds
-    static ClipboardSleep := 150         ; Sleep after clipboard operations
-    static PasteSleep := 100             ; Sleep after paste
-    static LayoutSwitchRetryDelay := 50  ; Delay between layout detection retries
+    static ClipboardWait := 0.3          ; ClipWait timeout in seconds
+    static ClipboardWaitFast := 0.05     ; Short timeout for speculative copy (selection check)
+    static ClipboardSleep := 50          ; Sleep after clipboard operations
+    static PasteSleep := 50              ; Sleep after paste
+    static LayoutSwitchRetryDelay := 30  ; Delay between layout detection retries
     static LayoutSwitchMaxRetries := 3   ; Max retries for layout detection
 
     ; Tooltip durations (milliseconds, negative for one-shot timer)
@@ -487,6 +488,13 @@ class ClipboardHelper {
         return ClipWait(Config.ClipboardWait) && A_Clipboard != ""
     }
 
+    ; Fast copy for speculative selection check (short timeout)
+    TryCopy() {
+        Send this.copyKey
+        Sleep Config.ClipboardSleep
+        return ClipWait(Config.ClipboardWaitFast) && A_Clipboard != ""
+    }
+
     ; Paste text (uses terminal-aware shortcut)
     Paste(text) {
         A_Clipboard := text
@@ -545,8 +553,8 @@ ConvertTextAction() {
     clip := ClipboardHelper()
     clip.Save()
 
-    ; Try to copy selected text
-    if (clip.Copy()) {
+    ; Fast check: is there already a selection?
+    if (clip.TryCopy()) {
         selectedText := clip.GetText()
 
         if (selectedText != "") {
@@ -568,8 +576,7 @@ ConvertTextAction() {
     }
 
     ; No selection - try to select and convert last word (not in terminals)
-    clip.Restore()
-    clip.Save()
+    A_Clipboard := ""  ; Clear without full restore/save cycle
 
     if (!LM.SelectLastWord()) {
         clip.Restore()
