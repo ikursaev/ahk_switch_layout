@@ -20,21 +20,8 @@ class Config {
     ; Display settings
     static MaxDisplayLength := 20        ; Max chars to show in tooltip
 
-    ; Shell window classes that need Alt+Shift for layout switching
-    static ShellClasses := [
-        "Shell_TrayWnd",
-        "Shell_SecondaryTrayWnd",
-        "Progman",
-        "WorkerW",
-        "NotifyIconOverflowWindow"
-    ]
-
-    ; Electron/UWP app classes that need Alt+Shift for layout switching
-    ; (PostMessage doesn't work reliably with these apps)
-    static ElectronClasses := [
-        "Chrome_WidgetWin_1",      ; WhatsApp, Discord, Slack, VS Code, etc.
-        "ApplicationFrameWindow"   ; UWP apps
-    ]
+    ; Auto-request admin elevation on startup (enables switching in elevated apps)
+    static RequestAdmin := true
 
     ; Layout information database
     static LayoutInfo := Map(
@@ -80,6 +67,7 @@ class LayoutManager {
     Mappings := Map()
     CharToLayoutMap := Map()  ; Reverse lookup: char -> layout code
     CurrentLayout := ""
+    SystemHotkey := ""        ; Detected system layout switch hotkey
 
     __New() {
         this.Initialize()
@@ -90,6 +78,7 @@ class LayoutManager {
         this.Layouts := []
         this.Mappings := Map()
         this.CharToLayoutMap := Map()
+        this.SystemHotkey := this._DetectSystemHotkey()
 
         if (!this._DetectSystemLayouts()) {
             this._AddFallbackLayouts()
@@ -250,7 +239,13 @@ class LayoutManager {
         }
         layoutList := RTrim(layoutList, ", ")
 
-        this.ShowTooltip("Detected layouts: " . layoutList, Config.TooltipLong)
+        msg := "Layouts: " . layoutList
+        msg .= "`nSwitch hotkey: " . this.SystemHotkey
+        if (!A_IsAdmin) {
+            msg .= "`n⚠ Not admin — elevated apps won't respond"
+        }
+
+        this.ShowTooltip(msg, Config.TooltipLong)
     }
 
     ; Get current keyboard layout code for foreground window
@@ -286,62 +281,38 @@ class LayoutManager {
         return this.GetCurrentLayoutCode()
     }
 
-    ; Switch to next keyboard layout
+    ; Switch to next keyboard layout using the system hotkey
     SwitchLayout() {
-        hwnd := DllCall("GetForegroundWindow", "Ptr")
+        this._SendSystemHotkey()
+    }
 
-        if (this._NeedsAltShiftSwitch(hwnd)) {
-            ; Use system shortcut for shell windows
-            Send "{Alt Down}{Shift Down}{Shift Up}{Alt Up}"
-        } else if (hwnd) {
-            ; Use PostMessage API for regular windows
-            threadId := DllCall("GetWindowThreadProcessId", "Ptr", hwnd, "Ptr", 0, "UInt")
-            currentHKL := DllCall("GetKeyboardLayout", "UInt", threadId, "Ptr")
-            currentId := currentHKL & 0xFFFF
+    ; Detect which system hotkey is configured for layout switching
+    _DetectSystemHotkey() {
+        try {
+            ; HKCU\Keyboard Layout\Toggle — "Language Hotkey":
+            ; 1 = Alt+Shift, 2 = Ctrl+Shift, 3 = Not assigned
+            hotkey := RegRead("HKCU\Keyboard Layout\Toggle", "Language Hotkey")
+        } catch {
+            hotkey := "3"
+        }
 
-            ; Find next layout
-            nextIndex := 1
-            for i, layout in this.Layouts {
-                if (layout.id == currentId) {
-                    nextIndex := (i >= this.Layouts.Length) ? 1 : i + 1
-                    break
-                }
-            }
-
-            targetHKL := this.Layouts[nextIndex].hkl
-            DllCall("PostMessage", "Ptr", hwnd, "UInt", 0x0050, "Ptr", 0, "Ptr", targetHKL)
-        } else {
-            ; Fallback to system shortcut
-            Send "{Alt Down}{Shift Down}{Shift Up}{Alt Up}"
+        switch hotkey {
+            case "1": return "AltShift"
+            case "2": return "CtrlShift"
+            default:  return "WinSpace"  ; Always available on Windows 10/11
         }
     }
 
-    ; Check if window needs Alt+Shift for layout switching
-    ; (Shell windows and Electron/UWP apps don't respond to PostMessage)
-    _NeedsAltShiftSwitch(hwnd) {
-        if (!hwnd) {
-            return true
+    ; Simulate the detected system hotkey
+    _SendSystemHotkey() {
+        switch this.SystemHotkey {
+            case "AltShift":
+                Send "{Alt Down}{Shift Down}{Shift Up}{Alt Up}"
+            case "CtrlShift":
+                Send "{Ctrl Down}{Shift Down}{Shift Up}{Ctrl Up}"
+            default:
+                Send "{LWin Down}{Space}{LWin Up}"
         }
-
-        className := Buffer(256)
-        DllCall("GetClassName", "Ptr", hwnd, "Ptr", className, "Int", 256)
-        classStr := StrGet(className)
-
-        ; Check shell window classes
-        for shellClass in Config.ShellClasses {
-            if (classStr = shellClass) {
-                return true
-            }
-        }
-
-        ; Check Electron/UWP app classes
-        for electronClass in Config.ElectronClasses {
-            if (classStr = electronClass) {
-                return true
-            }
-        }
-
-        return false
     }
 
     ; Convert text with layout awareness
@@ -485,6 +456,14 @@ class ClipboardHelper {
 ; ============================================================================
 
 SetCapsLockState "AlwaysOff"
+
+; Auto-elevate to admin if configured
+if (Config.RequestAdmin && !A_IsAdmin) {
+    try {
+        Run '*RunAs "' . A_ScriptFullPath . '"'
+        ExitApp
+    }
+}
 
 ; Create global instance
 global LM := LayoutManager()
