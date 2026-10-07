@@ -1,0 +1,3 @@
+# Store text files with LF in the repo, check them out with CRLF (Windows tools expect it)
+* text=auto eol=crlf
+*.exe binary

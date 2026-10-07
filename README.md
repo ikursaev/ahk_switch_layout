@@ -1,10 +1,10 @@
 # Keyboard Layout Switcher for AutoHotkey v2
 
-An AutoHotkey v2 script that remaps CapsLock for seamless keyboard layout switching and automatic text conversion between layouts. Supports any combination of installed Windows keyboard layouts.
+An AutoHotkey v2 script that remaps CapsLock for seamless keyboard layout switching and fixes text typed in the wrong layout. Supports any combination of installed Windows keyboard layouts.
 
 ## Requirements
 
-- Windows 10/11
+- Windows 10 (1607+) / 11
 - [AutoHotkey v2.0+](https://www.autohotkey.com/)
 - A layout switch shortcut configured in Windows (Alt+Shift, Ctrl+Shift, or Win+Space)
 
@@ -17,15 +17,15 @@ The script auto-detects which shortcut you have configured. Win+Space is always 
 3. Run `main.ahk` — a tooltip will confirm detected layouts and the detected system hotkey
 4. (Optional) Add a shortcut to `main.ahk` in your Startup folder (`shell:startup`) to run on login
 
-A precompiled `main.exe` is also included if you prefer not to install AutoHotkey.
+To get a standalone `main.exe`, compile `main.ahk` with Ahk2Exe (included with AutoHotkey).
 
 ### Running as administrator
 
-Without admin privileges, layout switching won't work in elevated apps (Task Manager, Registry Editor, installers, etc.). To enable full compatibility:
+Without admin privileges, the script can't switch layouts or fix text in elevated apps (Task Manager, Registry Editor, installers, etc.). To enable full compatibility:
 
 - Right-click `main.ahk` → Run as administrator, or
-- Set `Config.RequestAdmin := true` in the script to auto-elevate on startup, or
-- Set "Run as administrator" on your Startup folder shortcut
+- Set `Config.RequestAdmin := true` in the script (the default) to auto-elevate on startup, or
+- To start elevated at login without a UAC prompt every time, create a Task Scheduler task: trigger "At log on", action "Start a program" with `AutoHotkey64.exe` and the argument `"<path>\main.ahk"`, and tick "Run with highest privileges"
 
 The startup tooltip warns you if the script is not running as admin.
 
@@ -34,40 +34,40 @@ The startup tooltip warns you if the script is not running as admin.
 | Hotkey | Action |
 |--------|--------|
 | `CapsLock` | Switch to the next keyboard layout |
-| `Ctrl + CapsLock` | Convert selected text (or last word) to another layout and switch |
+| `Ctrl + CapsLock` | Fix the last word you typed (or the selected text) and switch to its layout |
+| `Ctrl + Shift + CapsLock` | Fix everything typed since the cursor last moved (or the selected text) and switch to its layout |
 
 CapsLock is permanently disabled (`SetCapsLockState "AlwaysOff"`).
 
-## Text Conversion (Ctrl + CapsLock)
+## Fixing Text
 
-Works in two modes:
+Typed `ghbdtn` instead of `привет`? Press `Ctrl + CapsLock`.
 
-1. **Selection mode** — if you have text selected, it converts the entire selection
-2. **Word mode** — if nothing is selected, it automatically selects and converts the last word on the current line
+- **Last word** — `Ctrl + CapsLock` deletes the word you just typed (plus any spaces after it) and retypes the same keys in the other layout. Press it again to convert back.
+- **Whole phrase** — `Ctrl + Shift + CapsLock` does the same for everything typed since you last clicked, pressed Enter, moved the cursor or used a shortcut — for when you notice after a few words.
+- **Selection** — when you haven't typed anything since the cursor moved, both hotkeys convert the selected text instead. `Ctrl + CapsLock` only does this when it saw you select text (dragging, double/triple-clicking or Shift+clicking over text, Shift+arrows, Ctrl+A); `Ctrl + Shift + CapsLock` always tries, for selections made some other way. With nothing selected, editors like VS Code copy the whole line, so a copied line is ignored unless the script saw it being selected.
 
-The script detects which layout the text was typed in using a character-frequency scoring algorithm, then converts to the most likely intended layout. A tooltip shows the before/after result.
+After fixing, the script switches to the layout the text was converted to, so you can keep typing. A tooltip shows the before/after result.
 
-This is useful when you accidentally type in the wrong layout — just press `Ctrl + CapsLock` to fix it.
+With three or more layouts, the target is the layout that changes the most characters — typing in English instead of Russian converts to Russian, not to German.
 
 ## How It Works
 
 ### Architecture
 
-The script is organized into three classes:
-
 | Class | Responsibility |
 |-------|----------------|
-| `Config` | Timing constants, layout database, virtual key codes, and admin elevation flag |
-| `LayoutManager` | Layout detection, system hotkey detection, switching, character mapping, text conversion, and tooltip display |
-| `ClipboardHelper` | Clipboard save/restore and copy/paste operations |
+| `Config` | Timing constants, terminal shortcuts, the physical keys to map, and the admin elevation flag |
+| `Layouts` | Layout detection, per-key character tables, system hotkey detection, and switching |
+| `TypedKeys` | Records the physical keys typed since the cursor last moved, and whether text was just selected |
+| `Converter` | Converts key sequences and text between layouts and picks the target layout |
+| `Clip` | Clipboard save/restore and copy/paste for selections |
 
 ### Layout Detection
 
-On startup, the script calls `GetKeyboardLayoutList` to detect all installed layouts. It recognizes 17 languages out of the box:
+On startup, the script calls `GetKeyboardLayoutList` to detect all installed layouts and asks Windows for each one's language name and code (e.g. `English (United States)`, `EN`), so every language works. Layouts are identified by their full keyboard layout handle, so two layouts of the same language (e.g. US and US-Dvorak) are kept apart (`EN-US`, `EN-US 2`).
 
-English (US), Russian, German, French, Italian, Spanish, Polish, Czech, Chinese (Simplified/Traditional), Japanese, Korean, Hungarian, Turkish, Greek, Hebrew, Arabic
-
-Unknown layouts are auto-detected and assigned generated names (e.g. `LANG_0422`). If system detection fails entirely, the script falls back to English (US) + Russian.
+Layouts added while the script runs are picked up the first time you type in them; added or removed layouts are also re-checked each time you fix text.
 
 ### Layout Switching
 
@@ -79,42 +79,49 @@ The script reads the registry (`HKCU\Keyboard Layout\Toggle`) to detect which sy
 | Ctrl+Shift (registry value `2`) | `Ctrl` + `Shift` |
 | None / not found | `Win` + `Space` (always available on Windows 10/11) |
 
-This single approach works universally across all window types — regular Win32 apps, Electron apps (VS Code, Discord, Slack), UWP apps, shell windows (taskbar, desktop), and everything else — because Windows itself handles the hotkey at the system level.
+Alt+Shift and Ctrl+Shift only cycle between languages, so when two layouts share a language (e.g. US and US-Dvorak), the script uses `Win` + `Space`, which reaches every layout.
 
-After switching, the script retries layout detection up to 3 times (with 50ms delays) to confirm the switch took effect.
+This works across all window types — regular Win32 apps, Electron apps (VS Code, Discord, Slack), UWP apps, shell windows, and terminals — because Windows itself handles the hotkey.
+
+After pressing it, the script waits (up to 5 × 30ms) until the focused window reports the new layout. When fixing text, it presses the hotkey as many times as needed to reach the target layout, and not at all if it's already active.
 
 ### Character Mapping
 
-The script dynamically generates character mappings between all installed layout pairs using `ToUnicodeEx` and `MapVirtualKeyEx` Windows APIs:
+For every installed layout, the script builds a table of what each physical key types, normal and shifted, using `MapVirtualKeyEx` and `ToUnicodeEx`:
 
-- Maps all letters (A-Z), digits (0-9), and 11 special character keys
-- Generates both normal and shifted variants
+- Covers the number row, all letter rows with their punctuation keys, the extra ISO key (`<>` on European keyboards), and Space
+- Maps by physical position (scan code), so QWERTZ, AZERTY and Dvorak layouts convert correctly, not just Latin/Cyrillic pairs
 - No hardcoded character tables — works with any layout combination
-- Builds a reverse lookup map (character → possible source layouts) for fast text detection
 
-### Text Layout Detection
+### Typed Key Tracking
 
-When converting text, the script scores each installed layout by counting how many characters in the text belong to that layout's character set. The layout with the highest score is treated as the source layout.
+An `InputHook` watches the keyboard (without blocking anything) and records each character key as a physical key plus the layout it was typed in. Backspace removes the last key. Clicking, arrows, Enter, Tab, shortcuts, or switching windows start over, since the typed keys may no longer end at the cursor.
 
-### Clipboard Handling
+Fixing a word then means pressing Backspace once per character and retyping the same keys in another layout. It doesn't use the clipboard, and it works in terminals too.
 
-Text conversion uses the clipboard internally. The script saves and restores the original clipboard contents so your clipboard is not affected.
+### Selection Conversion
+
+For selected text, the script copies it, detects which layout it was typed in (each character votes for the layouts that can type it; ties go to the current layout), converts it key by key, and pastes the result. To undo, use the app's own undo (`Ctrl+Z`).
+
+The original clipboard is restored 400ms after pasting, so slow apps (Electron, Office) have time to read the converted text first. If you copy something else in the meantime, the restore is skipped.
 
 ### Terminal Awareness
 
-In terminals, `Ctrl+C` sends SIGINT instead of copying text. The script detects terminal windows and automatically uses the correct shortcuts:
+In terminals, `Ctrl+C` sends an interrupt instead of copying, so selection conversion uses each terminal's own shortcuts:
 
 | Terminal | Copy | Paste |
 |----------|------|-------|
 | Windows Terminal | `Ctrl+Shift+C` | `Ctrl+Shift+V` |
+| Classic console (cmd, PowerShell) | `Ctrl+Insert` | `Shift+Insert` |
 | ConEmu / Cmder | `Ctrl+Shift+C` | `Ctrl+Shift+V` |
 | Git Bash / MSYS2 (mintty) | `Ctrl+Insert` | `Shift+Insert` |
 | Alacritty | `Ctrl+Shift+C` | `Ctrl+Shift+V` |
+| WezTerm | `Ctrl+Shift+C` | `Ctrl+Shift+V` |
 | Other apps | `Ctrl+C` | `Ctrl+V` |
 
-In terminals, the "word mode" fallback (auto-select last word) is disabled since `End`/`Ctrl+Shift+Left` behave differently. You must select text manually first, then press `Ctrl + CapsLock`.
+Terminals can't replace a selection, so a converted selection is pasted at the cursor, and only single-line selections are accepted (a terminal would run every pasted line). To fix what you just typed at the prompt, use the last-word or whole-phrase hotkeys, which work in any terminal.
 
-To add support for other terminals, add their window class to `Config.TerminalClasses`.
+To add support for other terminals, add their window class to `Config.TerminalClasses`. VS Code's integrated terminal can't be told apart from the editor by window class, so select text there before using `Ctrl + Shift + CapsLock`.
 
 ## Configuration
 
@@ -123,15 +130,16 @@ All tunables are in the `Config` class at the top of `main.ahk`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `RequestAdmin` | `true` | Auto-request admin elevation on startup |
-| `ClipboardWait` | `0.5` | ClipWait timeout (seconds) |
-| `ClipboardSleep` | `150` | Sleep after clipboard operations (ms) |
-| `PasteSleep` | `100` | Sleep after paste (ms) |
-| `LayoutSwitchRetryDelay` | `50` | Delay between layout detection retries (ms) |
-| `LayoutSwitchMaxRetries` | `3` | Max retries for layout detection |
+| `ClipboardWait` | `0.3` | ClipWait timeout when copying a selection (seconds) |
+| `ClipboardRestoreDelay` | `400` | Delay before restoring the clipboard after pasting (ms) |
+| `LayoutSwitchRetryDelay` | `30` | Delay between checks that a layout switch took effect (ms) |
+| `LayoutSwitchMaxRetries` | `5` | Max checks per layout switch |
 | `TooltipShort` | `1500` | Short tooltip duration (ms) |
 | `TooltipMedium` | `3000` | Medium tooltip duration (ms) |
 | `TooltipLong` | `4000` | Long tooltip duration (ms) |
 | `MaxDisplayLength` | `20` | Max characters shown in tooltip |
+| `MaxTypedKeys` | `200` | Max typed keys remembered for fixing |
+| `TerminalClasses` | see above | Terminal window classes and their copy/paste shortcuts |
 
 ## Known Limitations
 
@@ -139,23 +147,25 @@ These cases cannot be solved by any AutoHotkey script:
 
 - **Exclusive fullscreen games** — DirectInput bypasses the normal Windows input pipeline entirely
 - **Remote Desktop / VM windows** — keystrokes are forwarded to the remote OS
-- **Apps blocking clipboard** — text conversion won't work in apps that restrict clipboard access (password managers, some banking apps)
+- **Apps blocking clipboard** — selection conversion won't work in apps that restrict clipboard access (password managers, some banking apps)
+
+Fixing typed text relies on the script seeing every keystroke:
+
+- Characters typed with AltGr or dead keys (`^` + `e` = `ê`) start a new word, since their output can't be predicted
+- Autocomplete and autocorrect change text without keystrokes. In fields that complete inline (e.g. a browser's address bar), the first Backspace removes the suggestion and a stray character can remain — select the text and use `Ctrl + Shift + CapsLock` there
+- Where letter keys are commands rather than typing (Vim's normal mode, single-key shortcuts on websites), the script still counts them as typed until the next click, arrow key or Enter
 
 ## Troubleshooting
 
 **Layout doesn't switch:**
-- Restart the script if layouts were added or removed
 - If not running as admin, elevated apps (Task Manager, etc.) won't respond — see [Running as administrator](#running-as-administrator)
 
+**`Ctrl + CapsLock` says "Nothing to fix":**
+- You haven't typed anything since the cursor last moved, and the script didn't see you select text. Select it and press `Ctrl + Shift + CapsLock`
+
 **Text conversion produces wrong results:**
-- The detection algorithm needs enough characters to identify the source layout
+- Selection conversion guesses which layout the text was typed in; it needs enough characters to tell
 - Single characters may not convert correctly if they exist in multiple layouts
 
-**Text conversion doesn't work at all:**
-- Both layouts must have mappable characters for the keys you typed
-- Works best with Latin/Cyrillic layout pairs
-- Check that clipboard access isn't blocked by the target application
-
 **Tooltip says "No conversion available":**
-- The text may already be in the correct layout
-- The character mapping between your two layouts may not cover the characters used
+- The keys type the same characters in every other layout (e.g. digits or spaces only)
