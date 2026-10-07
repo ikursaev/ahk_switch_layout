@@ -102,16 +102,16 @@ class Layouts {
     static CurrentHkl() => this.HklOf(WinExist("A"))
     static IsCharKey(sc) => this._charKeys.Has(sc)
 
-    ; Layout of the thread that receives a window's input
+    ; Layout of the thread that receives a window's input. That's the thread of the focused control, which can
+    ; differ from the window's own (UWP apps, hosted controls); AutoHotkey reads hotstring layouts the same way.
     static HklOf(hwnd) {
         if (!hwnd)
             return 0
-        try {
-            ; UWP apps: the frame window belongs to ApplicationFrameHost; the app's own CoreWindow gets the input
-            if (WinGetClass(hwnd) == "ApplicationFrameWindow")
-                hwnd := DllCall("FindWindowEx", "Ptr", hwnd, "Ptr", 0, "Str", "Windows.UI.Core.CoreWindow", "Ptr", 0, "Ptr") || hwnd
-        }
         threadId := DllCall("GetWindowThreadProcessId", "Ptr", hwnd, "Ptr", 0, "UInt")
+        info := Buffer(24 + 6 * A_PtrSize, 0)  ; GUITHREADINFO
+        NumPut("UInt", info.Size, info)
+        if (DllCall("GetGUIThreadInfo", "UInt", threadId, "Ptr", info) && (focus := NumGet(info, 8 + A_PtrSize, "Ptr")))  ; hwndFocus
+            threadId := DllCall("GetWindowThreadProcessId", "Ptr", focus, "Ptr", 0, "UInt")
         return DllCall("GetKeyboardLayout", "UInt", threadId, "Ptr")
     }
 
@@ -560,13 +560,14 @@ FixTyped(span) {
     }
     before := Converter.Text(span)
     after := Converter.Text(span, target)
-    ; SendText types Unicode characters, so the result doesn't depend on the active layout
+    ; Switch first: Chromium apps (browsers, VS Code) type the English letters of a Unicode SendText as
+    ; keys of the active layout, so "hello" sent while Russian is active comes out as "руддщ"
+    Layouts.SwitchTo(target)
     Send "{Backspace " StrLen(before) "}"
     SendText after
     for k in span
         if (target.chars.Has(k.key))
             k.hkl := target.hkl
-    Layouts.SwitchTo(target)
     ShowConversion(before, after, target)
 }
 
@@ -665,10 +666,29 @@ CapsLock:: {
     KeyWait "CapsLock"  ; One switch per press, however long it's held
 }
 
+; The fix hotkeys fire with Ctrl held, and Send only releases it right before the first key that isn't a modifier,
+; so the layout switch would start as Ctrl+Win (Wispr Flow's dictation shortcut) or Ctrl+Alt+Shift. Let go of it
+; for the whole fix and press it again at the end: a modifier the script presses itself counts as deliberately
+; held, and every later Send would keep it down (Ctrl+Backspace deletes words, Ctrl+letters are shortcuts).
+WithCtrlReleased(fn) {
+    held := []
+    for key in ["LCtrl", "RCtrl"]
+        if GetKeyState(key)
+            held.Push(key)
+    for key in held
+        Send "{Blind}{" key " Up}"
+    try fn()
+    finally {
+        for key in held
+            if GetKeyState(key, "P")
+                Send "{Blind}{" key " Down}"
+    }
+}
+
 ; Ctrl+CapsLock: fix the last typed word (or the selection)
 ^CapsLock:: {
     Critical
-    FixText(false)
+    WithCtrlReleased(() => FixText(false))
     Critical "Off"
     KeyWait "CapsLock"
 }
@@ -681,7 +701,7 @@ CapsLock:: {
     Send "{Blind}{vkE8}"
     KeyWait "Shift"
     Critical
-    FixText(true)
+    WithCtrlReleased(() => FixText(true))
     Critical "Off"
     KeyWait "CapsLock"
 }
