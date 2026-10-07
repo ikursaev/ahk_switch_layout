@@ -56,6 +56,7 @@ class Layouts {
     static ByHkl := Map()
     static SystemHotkey := ""   ; "Alt+Shift", "Ctrl+Shift" or "Win+Space"
     static _missing := Map()    ; HKLs still unknown after re-detecting, so we don't re-detect on every key
+    static _pending := ""       ; Layout to switch to once Ctrl is let go of
     static _charKeys := Map()
 
     static Init() {
@@ -134,6 +135,31 @@ class Layouts {
                 return
             this.SwitchNext()
         }
+    }
+
+    ; Switch to `target` once Ctrl is up. Windows answers a Win+Space pressed while Ctrl is held with a fake Ctrl
+    ; release, so the next Ctrl+CapsLock would arrive as a plain CapsLock (and Wispr Flow would see Ctrl+Win).
+    static SwitchWhenCtrlUp(target) {
+        this._pending := target
+        if (!GetKeyState("Ctrl", "P"))
+            this.SwitchPending()
+    }
+
+    static SwitchPending() {
+        if (target := this._pending) {
+            this._pending := ""
+            this.SwitchTo(target)
+        }
+    }
+
+    static OnCtrlUp() {
+        if (this._pending)
+            SetTimer(ObjBindMethod(this, "_SwitchIfCtrlUp"), -1)  ; Outside the input hook's callback
+    }
+
+    static _SwitchIfCtrlUp() {
+        if (!GetKeyState("Ctrl", "P"))  ; The other Ctrl may still be held
+            this.SwitchPending()
     }
 
     ; Character table for every physical key, normal and shifted
@@ -341,6 +367,8 @@ class TypedKeys {
     static _KeyUp(ih, vk, sc) {
         if (this._mods.Has(vk))
             this._mods.Delete(vk)
+        if (vk == 0x11 || vk == 0xA2 || vk == 0xA3)
+            Layouts.OnCtrlUp()
     }
 
     static _Record(sc, shift) {
@@ -496,10 +524,15 @@ class Clip {
         return {copy: "^c", paste: "^v", terminal: false}
     }
 
-    ; Copy the selection as text; "" if nothing (or only files) got copied. Follow up with Paste or Restore.
-    static Copy(copyKey) {
+    ; Remember the user's clipboard, to put back after Paste (or with Restore)
+    static Save() {
         this._FinishPaste()  ; Restore after an earlier paste first, so we save the user's clipboard, not ours
         this._saved := ClipboardAll()
+    }
+
+    ; Copy the selection as text; "" if nothing (or only files) got copied. Follow up with Paste or Restore.
+    static Copy(copyKey) {
+        this.Save()
         A_Clipboard := ""
         Send copyKey
         if (!ClipWait(Config.ClipboardWait) || DllCall("IsClipboardFormatAvailable", "UInt", 15))  ; CF_HDROP: files from Explorer
@@ -560,14 +593,16 @@ FixTyped(span) {
     }
     before := Converter.Text(span)
     after := Converter.Text(span, target)
-    ; Switch first: Chromium apps (browsers, VS Code) type the English letters of a Unicode SendText as
-    ; keys of the active layout, so "hello" sent while Russian is active comes out as "руддщ"
-    Layouts.SwitchTo(target)
+    ; Paste rather than SendText: Chromium apps (browsers, VS Code) type the English letters of a Unicode SendText
+    ; as keys of the active layout ("hello" comes out as "руддщ" while Russian is active), and the layout can't be
+    ; switched beforehand while Ctrl is held (see SwitchWhenCtrlUp)
     Send "{Backspace " StrLen(before) "}"
-    SendText after
+    Clip.Save()
+    Clip.Paste(after, Clip.Shortcuts().paste)
     for k in span
         if (target.chars.Has(k.key))
             k.hkl := target.hkl
+    Layouts.SwitchWhenCtrlUp(target)
     ShowConversion(before, after, target)
 }
 
@@ -598,7 +633,7 @@ FixSelection(selectionSeen) {
     after := Converter.Text(keys, target)
     Clip.Paste(after, shortcuts.paste)
     TypedKeys.SelectionLikely := false  ; The paste replaced it
-    Layouts.SwitchTo(target)
+    Layouts.SwitchWhenCtrlUp(target)
     ShowConversion(text, after, target)
 }
 
@@ -660,35 +695,17 @@ ShowStartupMessage()
 ; CapsLock: switch to the next layout
 CapsLock:: {
     Critical
+    Layouts.SwitchPending()  ; Ctrl was just let go of after a fix: switch from the fixed text's layout
     layout := Layouts.SwitchNext()
     ShowTooltip("Layout: " (layout ? layout.code : "unknown"), Config.TooltipShort)
     Critical "Off"
     KeyWait "CapsLock"  ; One switch per press, however long it's held
 }
 
-; The fix hotkeys fire with Ctrl held, and Send only releases it right before the first key that isn't a modifier,
-; so the layout switch would start as Ctrl+Win (Wispr Flow's dictation shortcut) or Ctrl+Alt+Shift. Let go of it
-; for the whole fix and press it again at the end: a modifier the script presses itself counts as deliberately
-; held, and every later Send would keep it down (Ctrl+Backspace deletes words, Ctrl+letters are shortcuts).
-WithCtrlReleased(fn) {
-    held := []
-    for key in ["LCtrl", "RCtrl"]
-        if GetKeyState(key)
-            held.Push(key)
-    for key in held
-        Send "{Blind}{" key " Up}"
-    try fn()
-    finally {
-        for key in held
-            if GetKeyState(key, "P")
-                Send "{Blind}{" key " Down}"
-    }
-}
-
 ; Ctrl+CapsLock: fix the last typed word (or the selection)
 ^CapsLock:: {
     Critical
-    WithCtrlReleased(() => FixText(false))
+    FixText(false)
     Critical "Off"
     KeyWait "CapsLock"
 }
@@ -696,12 +713,15 @@ WithCtrlReleased(fn) {
 ; Ctrl+Shift+CapsLock: fix everything typed since the caret last moved (or the selection)
 ^+CapsLock:: {
     ; Ctrl+Shift can be a Windows layout hotkey (for languages, or for layouts within one), which fires when it's
-    ; released with no other key in between. Tap an unassigned key now, and wait for Shift to be let go, because
+    ; released with no other key in between. Tap an unassigned key now, and let go of Shift for the fix, because
     ; every Send releases and re-presses held modifiers, and that bare re-press would read as the hotkey too.
+    ; Hotkeys go by the keys the user holds, so tapping CapsLock again with Shift still held comes back here.
     Send "{Blind}{vkE8}"
-    KeyWait "Shift"
+    for key in ["LShift", "RShift"]
+        if GetKeyState(key)
+            Send "{Blind}{" key " Up}"
     Critical
-    WithCtrlReleased(() => FixText(true))
+    FixText(true)
     Critical "Off"
     KeyWait "CapsLock"
 }

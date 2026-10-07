@@ -43,11 +43,11 @@ CapsLock is permanently disabled (`SetCapsLockState "AlwaysOff"`).
 
 Typed `ghbdtn` instead of `привет`? Press `Ctrl + CapsLock`.
 
-- **Last word** — `Ctrl + CapsLock` deletes the word you just typed (plus any spaces after it) and retypes the same keys in the other layout. Press it again to convert back.
+- **Last word** — `Ctrl + CapsLock` deletes the word you just typed (plus any spaces after it) and pastes what the same keys type in the other layout. Keep holding `Ctrl` and press `CapsLock` again to convert back.
 - **Whole phrase** — `Ctrl + Shift + CapsLock` does the same for everything typed since you last clicked, pressed Enter, moved the cursor or used a shortcut — for when you notice after a few words.
 - **Selection** — when you haven't typed anything since the cursor moved, both hotkeys convert the selected text instead. `Ctrl + CapsLock` only does this when it saw you select text (dragging, double/triple-clicking or Shift+clicking over text, Shift+arrows, Ctrl+A); `Ctrl + Shift + CapsLock` always tries, for selections made some other way. With nothing selected, editors like VS Code copy the whole line, so a copied line is ignored unless the script saw it being selected.
 
-After fixing, the script switches to the layout the text was converted to, so you can keep typing. A tooltip shows the before/after result.
+Once you let go of `Ctrl`, the script switches to the layout the text was converted to, so you can keep typing. A tooltip shows the before/after result.
 
 With three or more layouts, the target is the layout that changes the most characters — typing in English instead of Russian converts to Russian, not to German.
 
@@ -61,7 +61,7 @@ With three or more layouts, the target is the layout that changes the most chara
 | `Layouts` | Layout detection, per-key character tables, system hotkey detection, and switching |
 | `TypedKeys` | Records the physical keys typed since the cursor last moved, and whether text was just selected |
 | `Converter` | Converts key sequences and text between layouts and picks the target layout |
-| `Clip` | Clipboard save/restore and copy/paste for selections |
+| `Clip` | Clipboard save/restore, copying selections and pasting fixes |
 
 ### Layout Detection
 
@@ -83,7 +83,7 @@ Alt+Shift and Ctrl+Shift only cycle between languages, so when two layouts share
 
 This works across all window types — regular Win32 apps, Electron apps (VS Code, Discord, Slack), UWP apps, shell windows, and terminals — because Windows itself handles the hotkey.
 
-After pressing it, the script waits (up to 5 × 30ms) until the focused window reports the new layout. When fixing text, it presses the hotkey as many times as needed to reach the target layout, and not at all if it's already active.
+After pressing it, the script waits (up to 5 × 30ms) until the focused window reports the new layout. When fixing text, it presses the hotkey as many times as needed to reach the target layout, and not at all if it's already active. It waits until you let go of `Ctrl`: Windows answers a `Win` + `Space` pressed while `Ctrl` is held by reporting `Ctrl` as released, which would turn the next `Ctrl + CapsLock` into a plain `CapsLock` (and set off apps listening for `Ctrl` + `Win`, such as Wispr Flow).
 
 ### Character Mapping
 
@@ -97,17 +97,17 @@ For every installed layout, the script builds a table of what each physical key 
 
 An `InputHook` watches the keyboard (without blocking anything) and records each character key as a physical key plus the layout it was typed in. Backspace removes the last key. Clicking, arrows, Enter, Tab, shortcuts, or switching windows start over, since the typed keys may no longer end at the cursor.
 
-Fixing a word then means pressing Backspace once per character and retyping the same keys in another layout. It doesn't use the clipboard, and it works in terminals too.
+Fixing a word then means pressing Backspace once per character and pasting what the same keys type in another layout. It pastes rather than types because Chromium-based apps (browsers, VS Code) type the English letters of simulated Unicode input as keys of the active layout, and the layout can't be switched first while `Ctrl` is held. Your clipboard is restored afterwards (see below), and it works in terminals too.
 
 ### Selection Conversion
 
 For selected text, the script copies it, detects which layout it was typed in (each character votes for the layouts that can type it; ties go to the current layout), converts it key by key, and pastes the result. To undo, use the app's own undo (`Ctrl+Z`).
 
-The original clipboard is restored 400ms after pasting, so slow apps (Electron, Office) have time to read the converted text first. If you copy something else in the meantime, the restore is skipped.
+After any fix, the original clipboard is restored 400ms after pasting, so slow apps (Electron, Office) have time to read the converted text first. If you copy something else in the meantime, the restore is skipped.
 
 ### Terminal Awareness
 
-In terminals, `Ctrl+C` sends an interrupt instead of copying, so selection conversion uses each terminal's own shortcuts:
+In terminals, `Ctrl+C` sends an interrupt instead of copying, so fixing text uses each terminal's own shortcuts:
 
 | Terminal | Copy | Paste |
 |----------|------|-------|
@@ -147,7 +147,7 @@ These cases cannot be solved by any AutoHotkey script:
 
 - **Exclusive fullscreen games** — DirectInput bypasses the normal Windows input pipeline entirely
 - **Remote Desktop / VM windows** — keystrokes are forwarded to the remote OS
-- **Apps blocking clipboard** — selection conversion won't work in apps that restrict clipboard access (password managers, some banking apps)
+- **Apps blocking clipboard** — fixing text won't work in apps that restrict clipboard access (password managers, some banking apps)
 
 Fixing typed text relies on the script seeing every keystroke:
 
